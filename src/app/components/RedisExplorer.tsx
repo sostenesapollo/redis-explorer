@@ -55,6 +55,12 @@ interface RedisKey {
   loading?: boolean;
 }
 
+interface KeyGroup {
+  prefix: string;
+  keys: RedisKey[];
+  isExpanded: boolean;
+}
+
 interface RedisExplorerProps {
   redisUrl: string;
   onDisconnect: () => void;
@@ -63,6 +69,7 @@ interface RedisExplorerProps {
 export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerProps) {
   const [keys, setKeys] = useState<RedisKey[]>([]);
   const [filteredKeys, setFilteredKeys] = useState<RedisKey[]>([]);
+  const [keyGroups, setKeyGroups] = useState<KeyGroup[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedKey, setSelectedKey] = useState<RedisKey | null>(null);
   const [loading, setLoading] = useState(false);
@@ -86,6 +93,121 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
       setFilteredKeys(keys);
     }
   }, [searchTerm, keys]);
+
+  useEffect(() => {
+    if (filteredKeys.length > 0) {
+      const groups = groupKeysBySimilarity(filteredKeys);
+      setKeyGroups(groups);
+    } else {
+      setKeyGroups([]);
+    }
+  }, [filteredKeys]);
+
+  const groupKeysBySimilarity = (keys: RedisKey[]): KeyGroup[] => {
+    if (keys.length === 0) return [];
+
+    // Ordenar chaves para facilitar o agrupamento
+    const sortedKeys = [...keys].sort((a, b) => a.key.localeCompare(b.key));
+    
+    const groups: KeyGroup[] = [];
+    let currentGroup: RedisKey[] = [];
+    let currentPrefix = '';
+    
+    for (let i = 0; i < sortedKeys.length; i++) {
+      const key = sortedKeys[i];
+      
+      if (currentGroup.length === 0) {
+        // Primeira chave do grupo
+        currentGroup = [key];
+        currentPrefix = findCommonPrefix(key.key, sortedKeys[i + 1]?.key || '');
+      } else {
+        const nextPrefix = findCommonPrefix(currentPrefix, key.key);
+        
+        if (nextPrefix.length >= currentPrefix.length && nextPrefix.length > 0) {
+          // A chave pertence ao grupo atual
+          currentGroup.push(key);
+          currentPrefix = nextPrefix;
+        } else {
+          // Finalizar grupo atual e começar novo
+          if (currentGroup.length > 1) {
+            groups.push({
+              prefix: currentPrefix,
+              keys: currentGroup,
+              isExpanded: false
+            });
+          } else {
+            // Chave única, adicionar como grupo individual
+            groups.push({
+              prefix: currentGroup[0].key,
+              keys: currentGroup,
+              isExpanded: true
+            });
+          }
+          
+          currentGroup = [key];
+          currentPrefix = findCommonPrefix(key.key, sortedKeys[i + 1]?.key || '');
+        }
+      }
+    }
+    
+    // Adicionar último grupo
+    if (currentGroup.length > 0) {
+      if (currentGroup.length > 1) {
+        groups.push({
+          prefix: currentPrefix,
+          keys: currentGroup,
+          isExpanded: false
+        });
+      } else {
+        groups.push({
+          prefix: currentGroup[0].key,
+          keys: currentGroup,
+          isExpanded: true
+        });
+      }
+    }
+    
+    return groups;
+  };
+
+  const findCommonPrefix = (str1: string, str2: string): string => {
+    if (!str2) return str1;
+    
+    let prefix = '';
+    const minLength = Math.min(str1.length, str2.length);
+    
+    for (let i = 0; i < minLength; i++) {
+      if (str1[i] === str2[i]) {
+        prefix += str1[i];
+      } else {
+        break;
+      }
+    }
+    
+    // Se o prefixo termina no meio de uma palavra, voltar até o último separador
+    const lastSeparator = Math.max(
+      prefix.lastIndexOf('-'),
+      prefix.lastIndexOf('_'),
+      prefix.lastIndexOf(':'),
+      prefix.lastIndexOf('.')
+    );
+    
+    if (lastSeparator > 0) {
+      return prefix.substring(0, lastSeparator + 1);
+    }
+    
+    return prefix;
+  };
+
+  const toggleGroup = (groupIndex: number) => {
+    setKeyGroups(prevGroups => 
+      prevGroups.map((group, index) => 
+        index === groupIndex 
+          ? { ...group, isExpanded: !group.isExpanded }
+          : group
+      )
+    );
+  };
 
   const loadKeys = async () => {
     try {
@@ -485,53 +607,85 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                   Chaves ({filteredKeys.length})
                 </h2>
               </div>
-              <div className=" overflow-y-auto">
-                {filteredKeys.map((key) => (
-                  <div
-                    key={key.key}
-                    onClick={() => handleKeyClick(key)}
-                    className={`p-4 border-b border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
-                      selectedKey?.key === key.key ? 'bg-red-50 dark:bg-red-900/20' : ''
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-gray-900 dark:text-white">
-                            {key.key}
-                          </p>
-                          {key.loading && (
-                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                          )}
-                          {!key.loaded && !key.loading && (
-                            <span className="text-xs text-gray-400">(clique para carregar)</span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 mt-1">
-                          {key.type && (
-                          <span className={`px-2 py-1 text-xs rounded-full ${getTypeColor(key.type || 'unknown')}`}>
-                            {key.type || 'unknown'}
-                          </span>
-                          )}
-                          {key.ttl !== undefined && key.ttl > 0 && (
-                            <span className="text-xs text-gray-500 dark:text-gray-400">
-                              TTL: {key.ttl}s
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteKey(key.key);
-                        }}
-                        className="text-red-500 hover:text-red-700 p-1"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              <div className="overflow-y-auto">
+                {keyGroups.map((group, groupIndex) => (
+                  <div key={group.prefix} className="border-b border-gray-200 dark:border-gray-700">
+                    {/* Cabeçalho do grupo */}
+                    <div
+                      onClick={() => toggleGroup(groupIndex)}
+                      className="p-3 bg-gray-50 dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-2">
+                        <svg
+                          className={`w-4 h-4 transition-transform ${group.isExpanded ? 'rotate-90' : ''}`}
+                          fill="none"
+                          stroke="currentColor"
+                          viewBox="0 0 24 24"
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                      </button>
+                        <span className="font-medium text-gray-900 dark:text-white">
+                          {group.prefix}
+                        </span>
+                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                          ({group.keys.length})
+                        </span>
+                      </div>
                     </div>
+                    
+                    {/* Chaves do grupo */}
+                    {group.isExpanded && (
+                      <div>
+                        {group.keys.map((key) => (
+                          <div
+                            key={key.key}
+                            onClick={() => handleKeyClick(key)}
+                            className={`p-4 border-l-4 border-l-gray-200 dark:border-l-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
+                              selectedKey?.key === key.key ? 'bg-red-50 dark:bg-red-900/20 border-l-red-500' : ''
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                                    {key.key}
+                                  </p>
+                                  {key.loading && (
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                                  )}
+                                  {!key.loaded && !key.loading && (
+                                    <span className="text-xs text-gray-400">(clique para carregar)</span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 mt-1">
+                                  {key.type && (
+                                    <span className={`px-2 py-1 text-xs rounded-full ${getTypeColor(key.type || 'unknown')}`}>
+                                      {key.type || 'unknown'}
+                                    </span>
+                                  )}
+                                  {key.ttl !== undefined && key.ttl > 0 && (
+                                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                                      TTL: {key.ttl}s
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteKey(key.key || '');
+                                }}
+                                className="text-red-500 hover:text-red-700 p-1"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
                 {filteredKeys.length === 0 && (
