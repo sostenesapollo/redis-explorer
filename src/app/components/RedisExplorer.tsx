@@ -59,6 +59,7 @@ interface KeyGroup {
   prefix: string;
   keys: RedisKey[];
   isExpanded: boolean;
+  isMovedToTop?: boolean;
 }
 
 interface RedisExplorerProps {
@@ -89,23 +90,49 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
         key.key.toLowerCase().includes(searchTerm.toLowerCase())
       );
       setFilteredKeys(filtered);
+      // Resetar a flag de movido para o topo quando há uma nova busca
+      setKeyGroups(prevGroups => 
+        prevGroups.map(group => ({ ...group, isMovedToTop: false }))
+      );
     } else {
       setFilteredKeys(keys);
+      // Resetar a flag de movido para o topo quando não há busca
+      setKeyGroups(prevGroups => 
+        prevGroups.map(group => ({ ...group, isMovedToTop: false }))
+      );
     }
-  }, [searchTerm, keys]);
+  }, [searchTerm, keys.length]); // Mudança: usar keys.length em vez de keys
 
   useEffect(() => {
     if (filteredKeys.length > 0) {
       const groups = groupKeysBySimilarity(filteredKeys);
       setKeyGroups(prevGroups => {
+        // Se não há grupos anteriores, usar os novos grupos
+        if (prevGroups.length === 0) {
+          return groups;
+        }
+        
         // Preservar o estado de expansão dos grupos existentes
-        return groups.map(newGroup => {
+        const preservedGroups = groups.map(newGroup => {
           const existingGroup = prevGroups.find(prevGroup => prevGroup.prefix === newGroup.prefix);
           return {
             ...newGroup,
-            isExpanded: existingGroup?.isExpanded ?? newGroup.isExpanded
+            isExpanded: existingGroup?.isExpanded ?? newGroup.isExpanded,
+            isMovedToTop: existingGroup?.isMovedToTop ?? false
           };
         });
+        
+        // Se há um grupo que foi movido para o topo, mantê-lo lá
+        const movedGroup = prevGroups.find(g => g.isMovedToTop);
+        if (movedGroup) {
+          const movedGroupIndex = preservedGroups.findIndex(g => g.prefix === movedGroup.prefix);
+          if (movedGroupIndex > 0) {
+            const [movedGroupNew] = preservedGroups.splice(movedGroupIndex, 1);
+            return [movedGroupNew, ...preservedGroups];
+          }
+        }
+        
+        return preservedGroups;
       });
     } else {
       setKeyGroups([]);
@@ -371,13 +398,15 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
         updatedGroup = {
           ...group,
           keys: [selectedKey, ...remainingKeys],
-          isExpanded: true // Garantir que está aberto
+          isExpanded: true, // Garantir que está aberto
+          isMovedToTop: true // Marcar como movido para o topo
         };
       } else {
         // Se a chave já está no topo, apenas garantir que está aberto
         updatedGroup = {
           ...group,
-          isExpanded: true
+          isExpanded: true,
+          isMovedToTop: true // Marcar como movido para o topo
         };
       }
       
