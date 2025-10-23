@@ -647,7 +647,7 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                             <div className="flex items-center justify-between">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                                  <p className="text-sm font-medium text-gray-900 dark:text-white">
                                     {key.key}
                                   </p>
                                   {key.loading && (
