@@ -386,31 +386,15 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
       
       if (groupIndex === -1) return prevGroups;
       
-      // Encontrar a chave dentro do grupo e movê-la para o topo do grupo
+      // Apenas garantir que o grupo está aberto e marcado como movido para o topo
       const group = prevGroups[groupIndex];
-      const keyIndex = group.keys.findIndex(k => k.key === keyName);
+      const updatedGroup = {
+        ...group,
+        isExpanded: true, // Garantir que está aberto
+        isMovedToTop: true // Marcar como movido para o topo
+      };
       
-      let updatedGroup = { ...group };
-      if (keyIndex > 0) {
-        // Mover a chave para o topo do grupo
-        const selectedKey = group.keys[keyIndex];
-        const remainingKeys = group.keys.filter(k => k.key !== keyName);
-        updatedGroup = {
-          ...group,
-          keys: [selectedKey, ...remainingKeys],
-          isExpanded: true, // Garantir que está aberto
-          isMovedToTop: true // Marcar como movido para o topo
-        };
-      } else {
-        // Se a chave já está no topo, apenas garantir que está aberto
-        updatedGroup = {
-          ...group,
-          isExpanded: true,
-          isMovedToTop: true // Marcar como movido para o topo
-        };
-      }
-      
-      // Mover o grupo inteiro para o topo da listagem
+      // Mover o grupo inteiro para o topo da listagem (sem alterar a ordem das chaves dentro do grupo)
       const otherGroups = prevGroups.filter((_, index) => index !== groupIndex);
       return [updatedGroup, ...otherGroups];
     });
