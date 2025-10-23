@@ -48,9 +48,11 @@ const formatJsonPretty = (value: unknown, type: string) => {
 
 interface RedisKey {
   key: string;
-  type: string;
-  ttl: number;
-  value: unknown;
+  type?: string;
+  ttl?: number;
+  value?: unknown;
+  loaded?: boolean;
+  loading?: boolean;
 }
 
 interface RedisExplorerProps {
@@ -67,6 +69,8 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
   const [error, setError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newKey, setNewKey] = useState({ key: '', type: 'string', value: '' });
+  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [showDebugInfo, setShowDebugInfo] = useState(false);
 
   useEffect(() => {
     loadKeys();
@@ -88,23 +92,106 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
       setLoading(true);
       setError(null);
       
+      console.log('Load keys');
+      
       const response = await fetch(`/api/redis/keys?url=${encodeURIComponent(redisUrl)}`);
+      const data = await response.json();
+      
+      console.log(data);
+      
+      if (!response.ok) {
+        throw new Error(data.error);
+      }
+      
+      // Marcar todas as chaves como não carregadas
+      const keysWithStatus = data.keys.map((key: { key: string }) => ({
+        ...key,
+        loaded: false,
+        loading: false
+      }));
+      
+      setKeys(keysWithStatus);
+    } catch (err: unknown) {
+      console.log('Error');
+      
+      const errorMessage = err instanceof Error ? err.message : 'Erro desconhecido';
+      setError('Erro ao carregar chaves: ' + errorMessage);
+      
+      // Tentar obter informações de debug em caso de erro
+      try {
+        const debugResponse = await fetch(`/api/redis/logs?url=${encodeURIComponent(redisUrl)}`);
+        if (debugResponse.ok) {
+          const debugData = await debugResponse.json();
+          setDebugInfo(debugData);
+        }
+      } catch (debugErr) {
+        console.warn('Não foi possível obter informações de debug:', debugErr);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadKeyValue = async (keyName: string) => {
+    try {
+      // Marcar a chave como carregando
+      setKeys(prevKeys => 
+        prevKeys.map(key => 
+          key.key === keyName 
+            ? { ...key, loading: true }
+            : key
+        )
+      );
+
+      const response = await fetch(`/api/redis/get?url=${encodeURIComponent(redisUrl)}&key=${encodeURIComponent(keyName)}`);
       const data = await response.json();
       
       if (!response.ok) {
         throw new Error(data.error);
       }
       
-      setKeys(data.keys);
+      // Atualizar a chave com os dados carregados
+      setKeys(prevKeys => 
+        prevKeys.map(key => 
+          key.key === keyName 
+            ? { 
+                ...key, 
+                type: data.type,
+                ttl: data.ttl,
+                value: data.value,
+                loaded: true,
+                loading: false
+              }
+            : key
+        )
+      );
+      
     } catch (err: unknown) {
-      setError('Erro ao carregar chaves: ' + (err instanceof Error ? err.message : 'Erro desconhecido'));
-    } finally {
-      setLoading(false);
+      console.error('Erro ao carregar valor da chave:', err);
+      
+      // Marcar como erro
+      setKeys(prevKeys => 
+        prevKeys.map(key => 
+          key.key === keyName 
+            ? { 
+                ...key, 
+                value: '[Erro ao carregar]',
+                loaded: true,
+                loading: false
+              }
+            : key
+        )
+      );
     }
   };
 
   const handleKeyClick = async (key: RedisKey) => {
     setSelectedKey(key);
+    
+    // Se a chave não foi carregada ainda, carregar agora
+    if (!key.loaded && !key.loading) {
+      await loadKeyValue(key.key);
+    }
   };
 
   const handleUpdateValue = async (newValue: string) => {
@@ -121,7 +208,7 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
         body: JSON.stringify({
           url: redisUrl,
           key: selectedKey.key,
-          type: selectedKey.type,
+          type: selectedKey.type || 'string',
           value: newValue
         })
       });
@@ -289,6 +376,17 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                 </svg>
                 Atualizar
               </button>
+              {debugInfo && (
+                <button
+                  onClick={() => setShowDebugInfo(!showDebugInfo)}
+                  className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  {showDebugInfo ? 'Ocultar Debug' : 'Mostrar Debug'}
+                </button>
+              )}
               <button
                 onClick={onDisconnect}
                 className="bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-lg transition-colors"
@@ -301,6 +399,67 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
       </div>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Debug Info Panel */}
+        {showDebugInfo && debugInfo && (
+          <div className="mb-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-medium text-yellow-800 dark:text-yellow-200">
+                Informações de Debug
+              </h3>
+              <button
+                onClick={() => setShowDebugInfo(false)}
+                className="text-yellow-600 hover:text-yellow-800 dark:text-yellow-400 dark:hover:text-yellow-200"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">Informações do Servidor</h4>
+                <div className="space-y-1 text-sm">
+                  <div><span className="font-medium">Versão:</span> {debugInfo.serverInfo?.redis_version || 'N/A'}</div>
+                  <div><span className="font-medium">Modo:</span> {debugInfo.serverInfo?.redis_mode || 'N/A'}</div>
+                  <div><span className="font-medium">Uptime:</span> {debugInfo.serverInfo?.uptime_in_seconds ? `${Math.floor(debugInfo.serverInfo.uptime_in_seconds / 3600)}h` : 'N/A'}</div>
+                  <div><span className="font-medium">Conexões:</span> {debugInfo.serverInfo?.connected_clients || 'N/A'}</div>
+                  <div><span className="font-medium">Memória:</span> {debugInfo.serverInfo?.used_memory_human || 'N/A'}</div>
+                </div>
+              </div>
+              <div>
+                <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">Testes de Conexão</h4>
+                <div className="space-y-1 text-sm">
+                  <div><span className="font-medium">Ping:</span> 
+                    <span className={`ml-2 px-2 py-1 rounded text-xs ${debugInfo.debugInfo?.pingResult ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                      {debugInfo.debugInfo?.pingResult ? 'OK' : 'Falhou'}
+                    </span>
+                  </div>
+                  <div><span className="font-medium">Keys:</span> 
+                    <span className={`ml-2 px-2 py-1 rounded text-xs ${debugInfo.debugInfo?.keysCount !== undefined ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                      {debugInfo.debugInfo?.keysCount !== undefined ? `${debugInfo.debugInfo.keysCount} encontradas` : 'Erro'}
+                    </span>
+                  </div>
+                  <div><span className="font-medium">Escrita:</span> 
+                    <span className={`ml-2 px-2 py-1 rounded text-xs ${debugInfo.debugInfo?.writeTest ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                      {debugInfo.debugInfo?.writeTest ? 'OK' : 'Falhou'}
+                    </span>
+                  </div>
+                  {debugInfo.debugInfo?.keysError && (
+                    <div className="text-red-600 text-xs mt-2">
+                      <strong>Erro Keys:</strong> {debugInfo.debugInfo.keysError}
+                    </div>
+                  )}
+                  {debugInfo.debugInfo?.writeError && (
+                    <div className="text-red-600 text-xs mt-2">
+                      <strong>Erro Escrita:</strong> {debugInfo.debugInfo.writeError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Search */}
         <div className="mb-6">
           <div className="relative">
@@ -337,14 +496,24 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                          {key.key}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-gray-900 dark:text-white">
+                            {key.key}
+                          </p>
+                          {key.loading && (
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                          )}
+                          {!key.loaded && !key.loading && (
+                            <span className="text-xs text-gray-400">(clique para carregar)</span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-2 mt-1">
-                          <span className={`px-2 py-1 text-xs rounded-full ${getTypeColor(key.type)}`}>
-                            {key.type}
+                          {key.type && (
+                          <span className={`px-2 py-1 text-xs rounded-full ${getTypeColor(key.type || 'unknown')}`}>
+                            {key.type || 'unknown'}
                           </span>
-                          {key.ttl > 0 && (
+                          )}
+                          {key.ttl !== undefined && key.ttl > 0 && (
                             <span className="text-xs text-gray-500 dark:text-gray-400">
                               TTL: {key.ttl}s
                             </span>
@@ -384,10 +553,10 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                       {selectedKey.key}
                     </h2>
                     <div className="flex items-center gap-2">
-                      <span className={`px-2 py-1 text-xs rounded-full ${getTypeColor(selectedKey.type)}`}>
-                        {selectedKey.type}
+                      <span className={`px-2 py-1 text-xs rounded-full ${getTypeColor(selectedKey.type || 'unknown')}`}>
+                        {selectedKey.type || 'unknown'}
                       </span>
-                      {selectedKey.ttl > 0 && (
+                      {selectedKey.ttl && selectedKey.ttl > 0 && (
                         <span className="text-xs text-gray-500 dark:text-gray-400">
                           TTL: {selectedKey.ttl}s
                         </span>
@@ -400,7 +569,7 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                     key={selectedKey.key}
                     keyData={selectedKey}
                     onUpdate={handleUpdateValue}
-                    onDelete={() => handleDeleteKey(selectedKey.key)}
+                    onDelete={() => handleDeleteKey(selectedKey.key || '')}
                   />
                 </div>
               </div>
@@ -433,7 +602,7 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
 
 // Key Editor Component
 function KeyEditor({ keyData, onUpdate, onDelete }: { keyData: RedisKey; onUpdate: (value: string) => void; onDelete: () => void }) {
-  const [value, setValue] = useState(formatJsonPretty(keyData.value, keyData.type));
+  const [value, setValue] = useState(formatJsonPretty(keyData.value, keyData.type || 'string'));
   const [isEditing, setIsEditing] = useState(false);
   const [jsonError, setJsonError] = useState<string | null>(null);
   const [isValidJson, setIsValidJson] = useState(true);
@@ -470,7 +639,7 @@ function KeyEditor({ keyData, onUpdate, onDelete }: { keyData: RedisKey; onUpdat
   };
 
   const handleCancel = () => {
-    setValue(formatJsonPretty(keyData.value, keyData.type));
+    setValue(formatJsonPretty(keyData.value, keyData.type || 'string'));
     setIsEditing(false);
     setJsonError(null);
     setIsValidJson(true);
@@ -566,7 +735,7 @@ function KeyEditor({ keyData, onUpdate, onDelete }: { keyData: RedisKey; onUpdat
       ) : (
         <div className="relative">
           <JsonHighlighter>
-            {String(formatJsonPretty(keyData.value, keyData.type))}
+            {String(formatJsonPretty(keyData.value, keyData.type || 'string'))}
           </JsonHighlighter>
         </div>
       )}

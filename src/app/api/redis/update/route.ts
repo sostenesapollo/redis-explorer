@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from 'redis';
+import { createRedisClient, safeDisconnect } from '../../../utils/redis-client';
 
 export async function PUT(request: NextRequest) {
+  let client;
+  
   try {
     const { url, key, type, value } = await request.json();
     
@@ -11,12 +13,7 @@ export async function PUT(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const client = createClient({ url });
-    
-    client.on('error', (err) => {
-      console.error('Redis Client Error', err);
-    });
-
+    client = createRedisClient({ url });
     await client.connect();
     
     switch (type) {
@@ -52,12 +49,15 @@ export async function PUT(request: NextRequest) {
         await client.set(key, value);
     }
     
-    await client.disconnect();
-    
     return NextResponse.json({ success: true, message: 'Chave atualizada com sucesso' });
   } catch (error: any) {
+    console.error('Erro ao atualizar chave:', error);
     return NextResponse.json({ 
       error: 'Erro ao atualizar chave: ' + error.message 
     }, { status: 500 });
+  } finally {
+    if (client) {
+      await safeDisconnect(client);
+    }
   }
 }

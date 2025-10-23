@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from 'redis';
+import { createRedisClient, testRedisConnection, safeDisconnect } from '../../../utils/redis-client';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,19 +9,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'URL do Redis é obrigatória' }, { status: 400 });
     }
 
-    const client = createClient({ url });
+    const client = createRedisClient({ url });
+    const connectionResult = await testRedisConnection(client);
     
-    client.on('error', (err) => {
-      console.error('Redis Client Error', err);
+    await safeDisconnect(client);
+    
+    if (!connectionResult.success) {
+      return NextResponse.json({ 
+        error: `Erro ao conectar: ${connectionResult.error}`,
+        debugInfo: connectionResult.debugInfo
+      }, { status: 500 });
+    }
+    
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Conectado com sucesso',
+      debugInfo: connectionResult.debugInfo
     });
-
-    await client.connect();
-    
-    // Testar conexão
-    await client.ping();
-    
-    return NextResponse.json({ success: true, message: 'Conectado com sucesso' });
   } catch (error: any) {
+    console.error('Erro na conexão Redis:', error);
     return NextResponse.json({ 
       error: 'Erro ao conectar: ' + error.message 
     }, { status: 500 });

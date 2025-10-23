@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from 'redis';
+import { createRedisClient, safeDisconnect } from '../../../utils/redis-client';
 
 export async function DELETE(request: NextRequest) {
+  let client;
+  
   try {
     const { searchParams } = new URL(request.url);
     const url = searchParams.get('url');
@@ -13,22 +15,20 @@ export async function DELETE(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const client = createClient({ url });
-    
-    client.on('error', (err) => {
-      console.error('Redis Client Error', err);
-    });
-
+    client = createRedisClient({ url });
     await client.connect();
     
     await client.del(key);
     
-    await client.disconnect();
-    
     return NextResponse.json({ success: true, message: 'Chave deletada com sucesso' });
   } catch (error: any) {
+    console.error('Erro ao deletar chave:', error);
     return NextResponse.json({ 
       error: 'Erro ao deletar chave: ' + error.message 
     }, { status: 500 });
+  } finally {
+    if (client) {
+      await safeDisconnect(client);
+    }
   }
 }
