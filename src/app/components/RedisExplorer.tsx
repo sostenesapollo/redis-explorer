@@ -76,7 +76,7 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
   const [error, setError] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newKey, setNewKey] = useState({ key: '', type: 'string', value: '' });
-  const [debugInfo, setDebugInfo] = useState<any>(null);
+  const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
   const [showDebugInfo, setShowDebugInfo] = useState(false);
 
   useEffect(() => {
@@ -97,11 +97,20 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
   useEffect(() => {
     if (filteredKeys.length > 0) {
       const groups = groupKeysBySimilarity(filteredKeys);
-      setKeyGroups(groups);
+      setKeyGroups(prevGroups => {
+        // Preservar o estado de expansão dos grupos existentes
+        return groups.map(newGroup => {
+          const existingGroup = prevGroups.find(prevGroup => prevGroup.prefix === newGroup.prefix);
+          return {
+            ...newGroup,
+            isExpanded: existingGroup?.isExpanded ?? newGroup.isExpanded
+          };
+        });
+      });
     } else {
       setKeyGroups([]);
     }
-  }, [filteredKeys]);
+  }, [filteredKeys]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const groupKeysBySimilarity = (keys: RedisKey[]): KeyGroup[] => {
     if (keys.length === 0) return [];
@@ -265,6 +274,13 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
         )
       );
 
+      // Também atualizar selectedKey se for a chave selecionada
+      setSelectedKey(prevSelected => 
+        prevSelected?.key === keyName 
+          ? { ...prevSelected, loading: true }
+          : prevSelected
+      );
+
       const response = await fetch(`/api/redis/get?url=${encodeURIComponent(redisUrl)}&key=${encodeURIComponent(keyName)}`);
       const data = await response.json();
       
@@ -273,47 +289,102 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
       }
       
       // Atualizar a chave com os dados carregados
+      const updatedKey = { 
+        key: keyName,
+        type: data.type,
+        ttl: data.ttl,
+        value: data.value,
+        loaded: true,
+        loading: false
+      };
+      
       setKeys(prevKeys => 
         prevKeys.map(key => 
           key.key === keyName 
-            ? { 
-                ...key, 
-                type: data.type,
-                ttl: data.ttl,
-                value: data.value,
-                loaded: true,
-                loading: false
-              }
+            ? updatedKey
             : key
         )
+      );
+      
+      // Atualizar selectedKey se for a chave selecionada
+      setSelectedKey(prevSelected => 
+        prevSelected?.key === keyName ? updatedKey : prevSelected
       );
       
     } catch (err: unknown) {
       console.error('Erro ao carregar valor da chave:', err);
       
+      const errorKey = { 
+        key: keyName,
+        value: '[Erro ao carregar]',
+        loaded: true,
+        loading: false
+      };
+      
       // Marcar como erro
       setKeys(prevKeys => 
         prevKeys.map(key => 
           key.key === keyName 
-            ? { 
-                ...key, 
-                value: '[Erro ao carregar]',
-                loaded: true,
-                loading: false
-              }
+            ? errorKey
             : key
         )
+      );
+      
+      // Atualizar selectedKey se for a chave selecionada
+      setSelectedKey(prevSelected => 
+        prevSelected?.key === keyName ? errorKey : prevSelected
       );
     }
   };
 
   const handleKeyClick = async (key: RedisKey) => {
+    // Sempre definir a chave selecionada (não fechar a aba)
     setSelectedKey(key);
+    
+    // Mover o grupo inteiro para o topo e mantê-lo aberto ANTES de carregar
+    moveGroupToTopAndOpen(key.key);
     
     // Se a chave não foi carregada ainda, carregar agora
     if (!key.loaded && !key.loading) {
       await loadKeyValue(key.key);
     }
+  };
+
+  const moveGroupToTopAndOpen = (keyName: string) => {
+    setKeyGroups(prevGroups => {
+      // Encontrar o grupo que contém a chave
+      const groupIndex = prevGroups.findIndex(group => 
+        group.keys.some(k => k.key === keyName)
+      );
+      
+      if (groupIndex === -1) return prevGroups;
+      
+      // Encontrar a chave dentro do grupo e movê-la para o topo do grupo
+      const group = prevGroups[groupIndex];
+      const keyIndex = group.keys.findIndex(k => k.key === keyName);
+      
+      let updatedGroup = { ...group };
+      if (keyIndex > 0) {
+        // Mover a chave para o topo do grupo
+        const selectedKey = group.keys[keyIndex];
+        const remainingKeys = group.keys.filter(k => k.key !== keyName);
+        updatedGroup = {
+          ...group,
+          keys: [selectedKey, ...remainingKeys],
+          isExpanded: true // Garantir que está aberto
+        };
+      } else {
+        // Se a chave já está no topo, apenas garantir que está aberto
+        updatedGroup = {
+          ...group,
+          isExpanded: true
+        };
+      }
+      
+      // Mover o grupo inteiro para o topo da listagem
+      const otherGroups = prevGroups.filter((_, index) => index !== groupIndex);
+      return [updatedGroup, ...otherGroups];
+    });
   };
 
   const handleUpdateValue = async (newValue: string) => {
@@ -541,39 +612,39 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
               <div>
                 <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">Informações do Servidor</h4>
                 <div className="space-y-1 text-sm">
-                  <div><span className="font-medium">Versão:</span> {debugInfo.serverInfo?.redis_version || 'N/A'}</div>
-                  <div><span className="font-medium">Modo:</span> {debugInfo.serverInfo?.redis_mode || 'N/A'}</div>
-                  <div><span className="font-medium">Uptime:</span> {debugInfo.serverInfo?.uptime_in_seconds ? `${Math.floor(debugInfo.serverInfo.uptime_in_seconds / 3600)}h` : 'N/A'}</div>
-                  <div><span className="font-medium">Conexões:</span> {debugInfo.serverInfo?.connected_clients || 'N/A'}</div>
-                  <div><span className="font-medium">Memória:</span> {debugInfo.serverInfo?.used_memory_human || 'N/A'}</div>
+                  <div><span className="font-medium">Versão:</span> {(debugInfo.serverInfo as any)?.redis_version || 'N/A'}</div>
+                  <div><span className="font-medium">Modo:</span> {(debugInfo.serverInfo as any)?.redis_mode || 'N/A'}</div>
+                  <div><span className="font-medium">Uptime:</span> {(debugInfo.serverInfo as any)?.uptime_in_seconds ? `${Math.floor((debugInfo.serverInfo as any).uptime_in_seconds / 3600)}h` : 'N/A'}</div>
+                  <div><span className="font-medium">Conexões:</span> {(debugInfo.serverInfo as any)?.connected_clients || 'N/A'}</div>
+                  <div><span className="font-medium">Memória:</span> {(debugInfo.serverInfo as any)?.used_memory_human || 'N/A'}</div>
                 </div>
               </div>
               <div>
                 <h4 className="font-medium text-yellow-800 dark:text-yellow-200 mb-2">Testes de Conexão</h4>
                 <div className="space-y-1 text-sm">
                   <div><span className="font-medium">Ping:</span> 
-                    <span className={`ml-2 px-2 py-1 rounded text-xs ${debugInfo.debugInfo?.pingResult ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                      {debugInfo.debugInfo?.pingResult ? 'OK' : 'Falhou'}
+                    <span className={`ml-2 px-2 py-1 rounded text-xs ${(debugInfo.debugInfo as any)?.pingResult ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                      {(debugInfo.debugInfo as any)?.pingResult ? 'OK' : 'Falhou'}
                     </span>
                   </div>
                   <div><span className="font-medium">Keys:</span> 
-                    <span className={`ml-2 px-2 py-1 rounded text-xs ${debugInfo.debugInfo?.keysCount !== undefined ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                      {debugInfo.debugInfo?.keysCount !== undefined ? `${debugInfo.debugInfo.keysCount} encontradas` : 'Erro'}
+                    <span className={`ml-2 px-2 py-1 rounded text-xs ${(debugInfo.debugInfo as any)?.keysCount !== undefined ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                      {(debugInfo.debugInfo as any)?.keysCount !== undefined ? `${(debugInfo.debugInfo as any).keysCount} encontradas` : 'Erro'}
                     </span>
                   </div>
                   <div><span className="font-medium">Escrita:</span> 
-                    <span className={`ml-2 px-2 py-1 rounded text-xs ${debugInfo.debugInfo?.writeTest ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                      {debugInfo.debugInfo?.writeTest ? 'OK' : 'Falhou'}
+                    <span className={`ml-2 px-2 py-1 rounded text-xs ${(debugInfo.debugInfo as any)?.writeTest ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                      {(debugInfo.debugInfo as any)?.writeTest ? 'OK' : 'Falhou'}
                     </span>
                   </div>
-                  {debugInfo.debugInfo?.keysError && (
+                  {(debugInfo.debugInfo as any)?.keysError && (
                     <div className="text-red-600 text-xs mt-2">
-                      <strong>Erro Keys:</strong> {debugInfo.debugInfo.keysError}
+                      <strong>Erro Keys:</strong> {(debugInfo.debugInfo as any).keysError}
                     </div>
                   )}
-                  {debugInfo.debugInfo?.writeError && (
+                  {(debugInfo.debugInfo as any)?.writeError && (
                     <div className="text-red-600 text-xs mt-2">
-                      <strong>Erro Escrita:</strong> {debugInfo.debugInfo.writeError}
+                      <strong>Erro Escrita:</strong> {(debugInfo.debugInfo as any).writeError}
                     </div>
                   )}
                 </div>
@@ -608,13 +679,21 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                 </h2>
               </div>
               <div className="overflow-y-auto">
-                {keyGroups.map((group, groupIndex) => (
-                  <div key={group.prefix} className="border-b border-gray-200 dark:border-gray-700">
-                    {/* Cabeçalho do grupo */}
-                    <div
-                      onClick={() => toggleGroup(groupIndex)}
-                      className="p-3 bg-gray-50 dark:bg-gray-700 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-600 flex items-center justify-between"
-                    >
+                {keyGroups.map((group, groupIndex) => {
+                  // Verificar se este grupo contém a chave selecionada
+                  const hasSelectedKey = selectedKey && group.keys.some(k => k.key === selectedKey.key);
+                  
+                  return (
+                    <div key={group.prefix} className="border-b border-gray-200 dark:border-gray-700">
+                      {/* Cabeçalho do grupo */}
+                      <div
+                        onClick={() => toggleGroup(groupIndex)}
+                        className={`p-3 cursor-pointer flex items-center justify-between transition-all duration-200 ${
+                          hasSelectedKey 
+                            ? 'bg-blue-50 dark:bg-blue-900/20 border-l-4 border-l-blue-500 shadow-md' 
+                            : 'bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600'
+                        }`}
+                      >
                       <div className="flex items-center gap-2">
                         <svg
                           className={`w-4 h-4 transition-transform ${group.isExpanded ? 'rotate-90' : ''}`}
@@ -624,10 +703,19 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                         >
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        <span className="font-medium text-gray-900 dark:text-white">
+                        {hasSelectedKey && (
+                          <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                        )}
+                        <span className={`font-medium text-gray-900 dark:text-white ${
+                          hasSelectedKey ? 'font-semibold' : ''
+                        }`}>
                           {group.prefix}
                         </span>
-                        <span className="text-xs text-gray-500 dark:text-gray-400">
+                        <span className={`text-xs ${
+                          hasSelectedKey 
+                            ? 'text-blue-600 dark:text-blue-400' 
+                            : 'text-gray-500 dark:text-gray-400'
+                        }`}>
                           ({group.keys.length})
                         </span>
                       </div>
@@ -640,18 +728,28 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                           <div
                             key={key.key}
                             onClick={() => handleKeyClick(key)}
-                            className={`p-4 border-l-4 border-l-gray-200 dark:border-l-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 ${
-                              selectedKey?.key === key.key ? 'bg-red-50 dark:bg-red-900/20 border-l-red-500' : ''
+                            className={`p-4 border-l-4 border-l-gray-200 dark:border-l-gray-600 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-all duration-200 ${
+                              selectedKey?.key === key.key 
+                                ? 'bg-blue-50 dark:bg-blue-900/20 border-l-blue-500 shadow-md ring-1 ring-blue-200 dark:ring-blue-800' 
+                                : ''
                             }`}
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <p className="text-sm font-medium text-gray-900 dark:text-white">
+                                  {selectedKey?.key === key.key && (
+                                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse"></div>
+                                  )}
+                                  <p className={`text-sm font-medium text-gray-900 dark:text-white ${
+                                    selectedKey?.key === key.key ? 'font-semibold' : ''
+                                  }`}>
                                     {key.key}
                                   </p>
                                   {key.loading && (
-                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                                    <div className="flex items-center gap-1">
+                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                                      <span className="text-xs text-blue-500">carregando...</span>
+                                    </div>
                                   )}
                                   {!key.loaded && !key.loading && (
                                     <span className="text-xs text-gray-400">(clique para carregar)</span>
@@ -687,7 +785,8 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                       </div>
                     )}
                   </div>
-                ))}
+                  );
+                })}
                 {filteredKeys.length === 0 && (
                   <div className="p-8 text-center text-gray-500 dark:text-gray-400">
                     {searchTerm ? 'Nenhuma chave encontrada' : 'Nenhuma chave no Redis'}
@@ -707,6 +806,12 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                       {selectedKey.key}
                     </h2>
                     <div className="flex items-center gap-2">
+                      {selectedKey.loading && (
+                        <div className="flex items-center gap-1">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                          <span className="text-xs text-blue-500">carregando...</span>
+                        </div>
+                      )}
                       <span className={`px-2 py-1 text-xs rounded-full ${getTypeColor(selectedKey.type || 'unknown')}`}>
                         {selectedKey.type || 'unknown'}
                       </span>
@@ -719,12 +824,21 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                   </div>
                 </div>
                 <div className="p-4">
-                  <KeyEditor
-                    key={selectedKey.key}
-                    keyData={selectedKey}
-                    onUpdate={handleUpdateValue}
-                    onDelete={() => handleDeleteKey(selectedKey.key || '')}
-                  />
+                  {selectedKey.loading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                        <p className="text-gray-500 dark:text-gray-400">Carregando valor da chave...</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <KeyEditor
+                      key={selectedKey.key}
+                      keyData={selectedKey}
+                      onUpdate={handleUpdateValue}
+                      onDelete={() => handleDeleteKey(selectedKey.key || '')}
+                    />
+                  )}
                 </div>
               </div>
             ) : (
