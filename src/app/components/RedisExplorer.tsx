@@ -756,17 +756,8 @@ export default function RedisExplorer({ redisUrl, onDisconnect }: RedisExplorerP
                                   <p className={`text-sm font-medium text-gray-900 dark:text-white ${
                                     selectedKey?.key === key.key ? 'font-semibold' : ''
                                   }`}>
-                                    {key.key}
+                                    {key.key?.replace(group.prefix, '')}
                                   </p>
-                                  {key.loading && (
-                                    <div className="flex items-center gap-1">
-                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                                      <span className="text-xs text-blue-500">carregando...</span>
-                                    </div>
-                                  )}
-                                  {!key.loaded && !key.loading && (
-                                    <span className="text-xs text-gray-400">(clique para carregar)</span>
-                                  )}
                                 </div>
                                 <div className="flex items-center gap-2 mt-1">
                                   {key.type && (
