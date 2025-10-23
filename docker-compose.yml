@@ -1,0 +1,16 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: redis-explorer-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+    restart: unless-stopped
+    # volumes:
+    #   - .:/app
+    #   - /app/node_modules
+    #   - /app/.next

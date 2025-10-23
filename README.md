@@ -23,13 +23,28 @@ Um aplicativo web moderno e intuitivo para gerenciar servidores Redis com interf
 
 ## 🚀 Como Usar
 
-### 1. Instalação
+### 🐳 Com Docker (Recomendado)
+
+```bash
+# Clone o repositório
+git clone <repository-url>
+cd redis-explorer
+
+# Execute com Docker
+./docker-scripts.sh dev
+```
+
+Acesse [http://localhost:3000](http://localhost:3000) - Redis estará disponível em `redis://localhost:6379`
+
+### 📦 Instalação Manual
+
+#### 1. Instalação
 
 ```bash
 npm install
 ```
 
-### 2. Executar o Servidor
+#### 2. Executar o Servidor
 
 ```bash
 npm run dev
